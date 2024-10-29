@@ -73,6 +73,9 @@ public:
         /// If supported, this enables developer features in the browser
         bool enableDebugMode = false;
 
+        /// If supported, this pops up a separate debug inspector window
+        bool enableDebugInspector = false;
+
         /// On OSX, setting this to true will allow the first click on a non-focused
         /// webview to be used as input, rather than the default behaviour, which is
         /// for the first click to give the webview focus but not trigger any action.
@@ -116,6 +119,11 @@ public:
         /// and the view will navigate to that address when launched.
         /// Leave blank for a default.
         std::string customSchemeURI;
+
+        /// Where supported, this property gives the webview a transparent background
+        /// by default, so you can avoid a flash of white while it's loading the
+        /// content.
+        bool transparentBackground = false;
 
         /// On OSX there's some custom code to intercept copy/paste keys, which
         /// otherwise wouldn't work by default. This lets you turn that off if you
@@ -244,7 +252,10 @@ struct choc::ui::WebView::Pimpl
         {
             webkit_settings_set_enable_write_console_messages_to_stdout (settings, true);
             webkit_settings_set_enable_developer_extras (settings, true);
+        }
 
+        if (options.enableDebugInspector)
+        {
             if (auto inspector = WEBKIT_WEB_INSPECTOR (webkit_web_view_get_inspector (WEBKIT_WEB_VIEW (webview))))
                 webkit_web_inspector_show (inspector);
         }
@@ -399,11 +410,6 @@ struct choc::ui::WebView::Pimpl
 
                     g_free (json);
                 }
-                else
-                {
-                    if (errorMessage.empty())
-                        errorMessage = "Failed to convert result to JSON";
-                }
 
                #if WEBKIT_CHECK_VERSION (2, 40, 0)
                 g_object_unref (js_value);
@@ -515,6 +521,9 @@ struct choc::ui::WebView::Pimpl
 
         call<void> (webview, "setUIDelegate:", delegate);
         call<void> (webview, "setNavigationDelegate:", delegate);
+
+        if (options->transparentBackground)
+            call<void> (webview, "setValue:forKey:", getNSNumberBool (false), getNSString ("drawsBackground"));
 
         call<void> (config, "release");
 
@@ -974,6 +983,7 @@ struct EventRegistrationToken { __int64 value; };
 
 typedef interface ICoreWebView2 ICoreWebView2;
 typedef interface ICoreWebView2Controller ICoreWebView2Controller;
+typedef interface ICoreWebView2Controller2 ICoreWebView2Controller2;
 typedef interface ICoreWebView2Environment ICoreWebView2Environment;
 typedef interface ICoreWebView2HttpHeadersCollectionIterator ICoreWebView2HttpHeadersCollectionIterator;
 typedef interface ICoreWebView2HttpRequestHeaders ICoreWebView2HttpRequestHeaders;
@@ -1218,6 +1228,15 @@ public:
     virtual HRESULT STDMETHODCALLTYPE NotifyParentWindowPositionChanged() = 0;
     virtual HRESULT STDMETHODCALLTYPE Close() = 0;
     virtual HRESULT STDMETHODCALLTYPE get_CoreWebView2(ICoreWebView2**) = 0;
+};
+
+struct COREWEBVIEW2_COLOR { BYTE A; BYTE R; BYTE G; BYTE B; };
+
+MIDL_INTERFACE("c979903e-d4ca-4228-92eb-47ee3fa96eab")
+ICoreWebView2Controller2 : public ICoreWebView2Controller
+{
+    virtual HRESULT STDMETHODCALLTYPE get_DefaultBackgroundColor (COREWEBVIEW2_COLOR*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE put_DefaultBackgroundColor (COREWEBVIEW2_COLOR) = 0;
 };
 
 STDAPI CreateCoreWebView2EnvironmentWithOptions(PCWSTR, PCWSTR, void*, ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler*);
@@ -1558,6 +1577,19 @@ private:
             view->AddRef();
             coreWebViewController = controller;
             coreWebView = view;
+
+            if (options.transparentBackground)
+            {
+                auto guid = IID { 0xc979903e, 0xd4ca, 0x4228, { 0x92, 0xeb, 0x47, 0xee, 0x3f, 0xa9, 0x6e, 0xab } };
+                ICoreWebView2Controller2* controller2 = {};
+
+                if (controller->QueryInterface (guid, (void**) std::addressof (controller2)) == S_OK
+                                   && controller2 != nullptr)
+                {
+                    controller2->put_DefaultBackgroundColor ({ 0, 0, 0, 0 });
+                    controller2->Release();
+                }
+            }
         }
 
         webviewInitialising.clear();
@@ -1985,8 +2017,9 @@ inline WebView::Options::Resource::Resource (std::string_view content, std::stri
 {
     if (! content.empty())
     {
-        auto src = content.data();
-        data.insert (data.end(), src, src + content.length());
+        // NB: not using vector::insert() because it triggers some stupid glib bug in MINGW
+        data.resize (content.length());
+        std::memcpy (data.data(), content.data(), content.length());
     }
 
     mimeType = std::move (mime);
