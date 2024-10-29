@@ -133,6 +133,9 @@ public:
     WebView& operator= (WebView&&) = default;
     ~WebView();
 
+    // zoom
+    bool setZoom(double factor);
+
     /// Returns true if the webview has been successfully initialised. This could
     /// fail on some systems if the OS doesn't provide a suitable component.
     bool loadedOK() const;
@@ -315,6 +318,16 @@ struct choc::ui::WebView::Pimpl
 
         g_clear_object (&webview);
         g_clear_object (&webviewContext);
+    }
+
+    bool setZoom (double factor)
+    {
+        if (webview != nullptr)
+        {
+            webkit_web_view_set_zoom_level (WEBKIT_WEB_VIEW (webview), factor);
+            return true;
+        }
+        return false;
     }
 
     static constexpr const char* postMessageFn = "window.webkit.messageHandlers.external.postMessage";
@@ -531,6 +544,18 @@ struct choc::ui::WebView::Pimpl
 
     bool loadedOK() const           { return getViewHandle() != nullptr; }
     void* getViewHandle() const     { return (CHOC_OBJC_CAST_BRIDGED void*) webview; }
+
+    bool setZoom (double factor)
+    {
+        CHOC_AUTORELEASE_BEGIN
+        if (webview != nullptr)
+        {
+            objc::call<void> (webview, "setPageZoom:", (objc::CGFloat) factor);
+            return true;
+        }
+        return false;
+        CHOC_AUTORELEASE_END
+    }
 
     std::shared_ptr<DeletionChecker> deletionChecker { std::make_shared<DeletionChecker>() };
 
@@ -1373,6 +1398,13 @@ struct WebView::Pimpl
         return true;
     }
 
+      bool setZoom (double factor)
+    {
+        if (coreWebViewController != nullptr)
+            return coreWebViewController->put_ZoomFactor (factor) == S_OK;
+        return false;
+    }
+
 private:
     WindowClass windowClass { L"CHOCWebView", (WNDPROC) wndProc };
     HWNDHolder hwnd;
@@ -1827,6 +1859,12 @@ inline bool WebView::loadedOK() const                                { return pi
 inline bool WebView::navigate (const std::string& url)               { return pimpl != nullptr && pimpl->navigate (url); }
 inline bool WebView::setHTML (const std::string& html)               { return pimpl != nullptr && pimpl->setHTML (html); }
 inline bool WebView::addInitScript (const std::string& script)       { return pimpl != nullptr && pimpl->addInitScript (script); }
+
+
+inline bool WebView::setZoom (double factor)
+{
+    return pimpl != nullptr && pimpl->setZoom (factor);
+}
 
 inline bool WebView::evaluateJavascript (const std::string& script, CompletionHandler completionHandler)
 {
